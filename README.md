@@ -11,4 +11,5 @@ Answer following PDF read and user prompt:
 ## Technology Stack
 1. Python
 2. Chainlit
-3. OpenAI
+3. Groq
+4. Langchain
