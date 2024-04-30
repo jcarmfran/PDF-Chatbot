@@ -1,196 +1,122 @@
-# Chroma compatibility issue resolution
-# https://docs.trychroma.com/troubleshooting#sqlite
-__import__("pysqlite3")
-import sys
-
-sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
-
-from tempfile import NamedTemporaryFile
-from typing import List
-
-import chainlit as cl
-from chainlit.types import AskFileResponse
-import chromadb
-from chromadb.config import Settings
-from langchain.chains import RetrievalQAWithSourcesChain
-from langchain.chat_models import ChatOpenAI
-from langchain.document_loaders import PDFPlumberLoader
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.schema import Document
-from langchain.schema.embeddings import Embeddings
+import PyPDF2
+from langchain_community.embeddings import OllamaEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import Chroma
-from langchain.vectorstores.base import VectorStore
+from langchain_community.vectorstores import Chroma
+from langchain.chains import ConversationalRetrievalChain
+from langchain.memory import ChatMessageHistory, ConversationBufferMemory
+import chainlit as cl
+from langchain_groq import ChatGroq
+from dotenv import load_dotenv
+import os
 
-from prompt import EXAMPLE_PROMPT, PROMPT
+# Loading environment variables from .env file
+load_dotenv() 
 
+# Function to initialize conversation chain with GROQ language model
+groq_api_key = os.environ['GROQ_API_KEY']
 
-def process_file(*, file: AskFileResponse) -> List[Document]:
-    """Processes one PDF file from a Chainlit AskFileResponse object by first
-    loading the PDF document and then chunk it into sub documents. Only
-    supports PDF files.
-
-    Args:
-        file (AskFileResponse): input file to be processed
-
-    Raises:
-        ValueError: when we fail to process PDF files. We consider PDF file
-        processing failure when there's no text returned. For example, PDFs
-        with only image contents, corrupted PDFs, etc.
-
-    Returns:
-        List[Document]: List of Document(s). Each individual document has two
-        fields: page_content(string) and metadata(dict).
-    """
-    if file.type != "application/pdf":
-        raise TypeError("Only PDF files are supported")
-
-    with NamedTemporaryFile() as tempfile:
-        tempfile.write(file.content)
-
-        loader = PDFPlumberLoader(tempfile.name)
-        documents = loader.load()
-
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=3000, chunk_overlap=100
-        )
-        docs = text_splitter.split_documents(documents)
-
-        # Adding source_id into the metadata to denote which document it is
-        for i, doc in enumerate(docs):
-            doc.metadata["source"] = f"source_{i}"
-
-        if not docs:
-            raise ValueError("PDF file parsing failed.")
-
-        return docs
-
-
-def create_search_engine(
-    *, docs: List[Document], embeddings: Embeddings
-) -> VectorStore:
-    """Takes a list of Langchain Documents and an embedding model API wrapper
-    and build a search index using a VectorStore.
-
-    Args:
-        docs (List[Document]): List of Langchain Documents to be indexed into
-        the search engine.
-        embeddings (Embeddings): encoder model API used to calculate embedding
-
-    Returns:
-        VectorStore: Langchain VectorStore
-    """
-    # Initialize Chromadb client to enable resetting and disable telemtry
-    client = chromadb.EphemeralClient()
-    client_settings = Settings(allow_reset=True, anonymized_telemetry=False)
-
-    # Reset the search engine to ensure we don't use old copies.
-    # NOTE: we do not need this for production
-    search_engine = Chroma(client=client, client_settings=client_settings)
-    search_engine._client.reset()
-    search_engine = Chroma.from_documents(
-        client=client,
-        documents=docs,
-        embedding=embeddings,
-        client_settings=client_settings,
-    )
-
-    return search_engine
-
+# Initializing GROQ chat with provided API key, model name, and settings
+llm_groq = ChatGroq(groq_api_key=groq_api_key, model_name="mixtral-8x7b-32768", temperature=0.2)
 
 @cl.on_chat_start
 async def on_chat_start():
-    """This function is written to prepare the environments for the chat
-    with PDF application. It should be decorated with cl.on_chat_start.
+    files = None #Initialize variable to store uploaded files
 
-    Returns:
-        None
-    """
-    # Asking user to to upload a PDF to chat with
-    files = None
+    # Wait for the user to upload a file
     while files is None:
         files = await cl.AskFileMessage(
-            content="Please Upload the PDF file you want to chat with...",
+            content="Please upload a pdf file to begin!",
             accept=["application/pdf"],
-            max_size_mb=20,
+            max_size_mb=100,# Optionally limit the file size
+            timeout=180, # Set a timeout for user response,
         ).send()
-    file = files[0]
 
-    # Process and save data in the user session
-    msg = cl.Message(content=f"Processing `{file.name}`...")
+    file = files[0] # Get the first uploaded file
+    print(file) # Print the file object for debugging
+    
+    # Sending an image with the local file path
+    elements = [
+    cl.Image(name="image", display="inline", path="assets/img/reader.jpg")
+    ]
+    # Inform the user that processing has started
+    msg = cl.Message(content=f"Processing `{file.name}`...",elements=elements)
     await msg.send()
 
-    docs = process_file(file=file)
-    cl.user_session.set("docs", docs)
-    msg.content = f"`{file.name}` processed. Loading ..."
-    await msg.update()
+    # Read the PDF file
+    pdf = PyPDF2.PdfReader(file.path)
+    pdf_text = ""
+    for page in pdf.pages:
+        pdf_text += page.extract_text()
+        
 
-    # Indexing documents into our search engine
-    embeddings = OpenAIEmbeddings(model="text-embedding-ada-002")
-    try:
-        search_engine = await cl.make_async(create_search_engine)(
-            docs=docs, embeddings=embeddings
-        )
-    except Exception as e:
-        await cl.Message(content=f"Error: {e}").send()
-        raise SystemError
-    msg.content = f"`{file.name}` loaded. You can now ask questions!"
-    await msg.update()
+    # Split the text into chunks
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=50)
+    texts = text_splitter.split_text(pdf_text)
 
-    model = ChatOpenAI(
-        model="gpt-3.5-turbo-16k-0613", temperature=0, streaming=True
+    # Create a metadata for each chunk
+    metadatas = [{"source": f"{i}-pl"} for i in range(len(texts))]
+
+    # Create a Chroma vector store
+    embeddings = OllamaEmbeddings()
+    docsearch = await cl.make_async(Chroma.from_texts)(
+        texts, embeddings, metadatas=metadatas
+    )
+    
+    # Initialize message history for conversation
+    message_history = ChatMessageHistory()
+    
+    # Memory for conversational context
+    memory = ConversationBufferMemory(
+        memory_key="chat_history",
+        output_key="answer",
+        chat_memory=message_history,
+        return_messages=True,
     )
 
-    chain = RetrievalQAWithSourcesChain.from_chain_type(
-        llm=model,
+    # Create a chain that uses the Chroma vector store
+    chain = ConversationalRetrievalChain.from_llm(
+        llm=llm_groq,
         chain_type="stuff",
-        retriever=search_engine.as_retriever(max_tokens_limit=4097),
-        chain_type_kwargs={"prompt": PROMPT, "document_prompt": EXAMPLE_PROMPT},
+        retriever=docsearch.as_retriever(),
+        memory=memory,
+        return_source_documents=True,
     )
 
-    # We are saving the chain in user_session, so we do not have to rebuild
-    # it every single time.
+    # Let the user know that the system is ready
+    msg.content = f"Processing `{file.name}` done. You can now ask questions!"
+    await msg.update()
+    #store the chain in user session
     cl.user_session.set("chain", chain)
 
 
 @cl.on_message
 async def main(message: cl.Message):
-    # Let's load the chain from user_session
-    chain = cl.user_session.get("chain")  # type: RetrievalQAWithSourcesChain
+    # Retrieve the chain from user session
+    chain = cl.user_session.get("chain") 
+    #call backs happens asynchronously/parallel 
+    cb = cl.AsyncLangchainCallbackHandler()
+    
+    # call the chain with user's message content
+    res = await chain.ainvoke(message.content, callbacks=[cb])
+    answer = res["answer"]
+    source_documents = res["source_documents"] 
 
-    response = await chain.acall(
-        message.content,
-        callbacks=[cl.AsyncLangchainCallbackHandler(stream_final_answer=True)],
-    )
-    answer = response["answer"]
-    sources = response["sources"].strip()
-
-    # Get all of the documents from user session
-    docs = cl.user_session.get("docs")
-    metadatas = [doc.metadata for doc in docs]
-    all_sources = [m["source"] for m in metadatas]
-
-    # Adding sources to the answer
-    source_elements = []
-    if sources:
-        found_sources = []
-
-        # Add the sources to the message
-        for source in sources.split(","):
-            source_name = source.strip().replace(".", "")
-            # Get the index of the source
-            try:
-                index = all_sources.index(source_name)
-            except ValueError:
-                continue
-            text = docs[index].page_content
-            found_sources.append(source_name)
+    text_elements = [] # Initialize list to store text elements
+    
+    # Process source documents if available
+    if source_documents:
+        for source_idx, source_doc in enumerate(source_documents):
+            source_name = f"source_{source_idx}"
             # Create the text element referenced in the message
-            source_elements.append(cl.Text(content=text, name=source_name))
-
-        if found_sources:
-            answer += f"\nSources: {', '.join(found_sources)}"
+            text_elements.append(
+                cl.Text(content=source_doc.page_content, name=source_name)
+            )
+        source_names = [text_el.name for text_el in text_elements]
+        
+        # Add source references to the answer
+        if source_names:
+            answer += f"\nSources: {', '.join(source_names)}"
         else:
             answer += "\nNo sources found"
-
-    await cl.Message(content=answer, elements=source_elements).send()
+    #return results
+    await cl.Message(content=answer, elements=text_elements).send()
