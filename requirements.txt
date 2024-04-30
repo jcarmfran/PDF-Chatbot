@@ -1,9 +1,11 @@
 chainlit
-openai
-python-dotenv
-langchain_openai 
-langchain_core
-python-dotenv
+langchain
 langchain_community
-langserve
+PyPDF2
+chromadb
+groq
+langchain-groq
+ollama
+python-dotenv
 -e .
+
