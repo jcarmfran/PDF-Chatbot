@@ -1,14 +1,11 @@
 # Welcome to My Bot! 🚀🤖
 
-Hi there, Developer! 👋 We're excited to have you on board. Chainlit is a powerful tool designed to help you prototype, debug and share applications built on top of LLMs.
+Hi there! 👋 This application was originally built by Francisco Carmona using `Groq`, `OpenAI`, and `Langchain`.
 
-## Useful Links 🔗
+## Connecting and Links 🔗
+For opportunities, reach out and connect via [Upwork](https://www.upwork.com/freelancers/~016a4502266adf2a1c?mp_source=share), [LinkedIn](https://www.linkedin.com/in/jcarmfran), or directly emailing me at jcarmfran@gmail.com.
 
-- **Documentation:** Get started with our comprehensive [Chainlit Documentation](https://docs.chainlit.io) 📚
-- **Discord Community:** Join our friendly [Chainlit Discord](https://discord.gg/k73SQ3FyUh) to ask questions, share your projects, and connect with other developers! 💬
-
-We can't wait to see what you create with Chainlit! Happy coding! 💻😊
-
-## Welcome screen
-
-To modify the welcome screen, edit the `chainlit.md` file at the root of your project. If you do not want a welcome screen, just leave this file empty.
+If you'd like to get to know me a little better and see what I've been up to, feel free to connect and review!
+    - [LinkedIn](https://www.linkedin.com/in/jcarmfran)
+    - [Github](https://github.com/jcarmfran)
+    - [online CV](https://jcarmfran.github.io)

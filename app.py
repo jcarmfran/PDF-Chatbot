@@ -1,13 +1,21 @@
-import PyPDF2
-from langchain_community.embeddings import OllamaEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
-from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ChatMessageHistory, ConversationBufferMemory
-import chainlit as cl
-from langchain_groq import ChatGroq
-from dotenv import load_dotenv
 import os
+import PyPDF2
+import chainlit as cl
+from dotenv import load_dotenv
+
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_openai import OpenAIEmbeddings
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.embeddings import OllamaEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_community.document_loaders import PyPDFDirectoryLoader
+from langchain.chains import ConversationalRetrievalChain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.memory import ChatMessageHistory, ConversationBufferMemory
+from langchain_groq import ChatGroq
+
+from src.prompt import EXAMPLE_PROMPT, PROMPT, WELCOME_MESSAGE
+
 
 # Loading environment variables from .env file
 load_dotenv() 
@@ -16,7 +24,7 @@ load_dotenv()
 groq_api_key = os.environ['GROQ_API_KEY']
 
 # Initializing GROQ chat with provided API key, model name, and settings
-llm_groq = ChatGroq(groq_api_key=groq_api_key, model_name="mixtral-8x7b-32768", temperature=0.2)
+llm_groq = ChatGroq(groq_api_key=groq_api_key, model_name="Llama3-8b-8192", temperature=0.1)
 
 @cl.on_chat_start
 async def on_chat_start():
@@ -25,10 +33,10 @@ async def on_chat_start():
     # Wait for the user to upload a file
     while files is None:
         files = await cl.AskFileMessage(
-            content="Please upload a pdf file to begin!",
+            content=WELCOME_MESSAGE,
             accept=["application/pdf"],
-            max_size_mb=100,# Optionally limit the file size
-            timeout=180, # Set a timeout for user response,
+            max_size_mb=25,# Optionally limit the file size
+            # timeout=180, # Set a timeout for user response,
         ).send()
 
     file = files[0] # Get the first uploaded file
@@ -71,6 +79,7 @@ async def on_chat_start():
         output_key="answer",
         chat_memory=message_history,
         return_messages=True,
+        
     )
 
     # Create a chain that uses the Chroma vector store
@@ -80,6 +89,10 @@ async def on_chat_start():
         retriever=docsearch.as_retriever(),
         memory=memory,
         return_source_documents=True,
+        # combine_docs_chain_kwargs={
+        #     "prompt": PROMPT,
+        #     "document_prompt": EXAMPLE_PROMPT
+        # }
     )
 
     # Let the user know that the system is ready
